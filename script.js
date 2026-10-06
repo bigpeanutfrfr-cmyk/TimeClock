@@ -1,6 +1,6 @@
-const URL="https://lhxgfstmzdbpkmyytbse.supabase.co";
-const KEY="sb_publishable_HZiFjnZZAsHyECLha2LM9g_cBB3WDUe";
-const db=supabase.createClient(URL,KEY);
+const SUPABASE_URL="https://lhxgfstmzdbpkmyytbse.supabase.co";
+const SUPABASE_KEY="sb_publishable_HZiFjnZZAsHyECLha2LM9g_cBB3WDUe";
+const db=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const app=document.getElementById("app");
 let S={user:null,profile:null,jobs:[],job:null,tab:"home",msg:"",err:""};
 const esc=x=>String(x??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
