@@ -1,8 +1,9 @@
 const SUPABASE_URL="https://lhxgfstmzdbpkmyytbse.supabase.co";
 const SUPABASE_KEY="sb_publishable_HZiFjnZZAsHyECLha2LM9g_cBB3WDUe";
+const RECOVERY=location.hash.includes("type=recovery")||location.search.includes("type=recovery");
 const db=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 const app=document.getElementById("app");
-let S={user:null,profile:null,jobs:[],job:null,tab:"home",msg:"",err:""};
+let S={user:null,profile:null,jobs:[],job:null,tab:"home",msg:"",err:"",mode:"signin",f:{name:"",email:"",pass:"",role:"worker"}};
 const esc=x=>String(x??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const money=x=>"$"+Number(x||0).toFixed(2);
 const date=x=>x?new Date(x).toLocaleString([],{dateStyle:"medium",timeStyle:"short"}):"—";
@@ -15,28 +16,39 @@ async function load(){
  if(!user){S.profile=null;return}
  const p=await db.from("profiles").select("*").eq("id",user.id).single();
  S.profile=p.data;
+ if(!S.profile&&user.user_metadata?.name){let ins=await db.from("profiles").insert({id:user.id,name:user.user_metadata.name,role:user.user_metadata.role||"worker"}).select().single();S.profile=ins.data||null}
  if(S.profile?.role==="manager"){let r=await db.from("jobs").select("*").eq("owner_id",user.id).order("created_at",{ascending:false});S.jobs=r.data||[]}
  else {let r=await db.from("job_workers").select("job_id,status,jobs(*)").eq("worker_id",user.id);S.jobs=(r.data||[]).filter(x=>x.status==="active"&&x.jobs).map(x=>x.jobs)}
 }
-async function boot(){theme();await load();render();db.auth.onAuthStateChange((event)=>{if(event==="PASSWORD_RECOVERY"){setTimeout(async()=>{let p=prompt("Enter your new password (6+ characters):");if(p&&p.length>=6){let r=await db.auth.updateUser({password:p});toast(r.error?r.error.message:"Password updated.",!!r.error)}else toast("Password not changed.",true)},0)}setTimeout(async()=>{await load();render()},0)})}
+async function boot(){theme();await load();render();if(RECOVERY)newPass();db.auth.onAuthStateChange((event)=>{if(event==="PASSWORD_RECOVERY")setTimeout(newPass,0);setTimeout(async()=>{await load();render()},0)})}
 boot();
 
 function auth(){
+const f=S.f,up=S.mode==="signup";
+const eye=`<button type="button" onclick="togglePw(this)" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:transparent;border:0;box-shadow:none;padding:6px 10px;width:auto;min-width:0;cursor:pointer;font-size:18px">👁️</button>`;
 return `<div class="auth"><div class="hero"><div class="logo">⏱️</div><h1>TimeClock</h1><p>Track shifts, tasks, requests, and jobs.</p></div>
-<div class="card"><h2>Sign in</h2><label>Email</label><input id="email" type="email">
-<label>Password</label><input id="pass" type="password">
-<label>Account type</label><select id="role"><option value="worker">👷 Worker</option><option value="manager">👑 Manager / Employer</option></select>
-<div class="actions"><button class="primary" onclick="login()">Sign In</button><button class="secondary" onclick="signup()">Create Account</button><button class="secondary" onclick="resetPassword()">Forgot Password?</button></div><p class="small">Supabase securely handles your password.</p></div></div>`}
+<div class="card"><h2>${up?"Create Account":"Sign In"}</h2>
+${up?`<label>Your name</label><input id="name" type="text" placeholder="Name TimeClock will show" value="${esc(f.name)}" oninput="S.f.name=this.value">`:""}
+<label>Email</label><input id="email" type="email" value="${esc(f.email)}" oninput="S.f.email=this.value">
+<label>Password</label><div style="position:relative"><input id="pass" type="password" style="padding-right:48px" value="${esc(f.pass)}" oninput="S.f.pass=this.value">${eye}</div>
+${up?`<label>Account type</label><select id="role" onchange="S.f.role=this.value"><option value="worker" ${f.role==="worker"?"selected":""}>👷 Worker</option><option value="manager" ${f.role==="manager"?"selected":""}>👑 Manager / Employer</option></select>`:""}
+<div class="actions">${up?`<button class="primary" onclick="signup()">Create Account</button>`:`<button class="primary" onclick="login()">Sign In</button><button class="secondary" onclick="resetPassword()">Forgot Password?</button>`}</div>
+<p class="small">${up?`Already have an account? <a href="#" onclick="setMode('signin');return false">Sign in</a>`:`New here? <a href="#" onclick="setMode('signup');return false">Create an account</a>`}</p>
+<p class="small">Supabase securely handles your password.</p></div></div>`}
 function wrap(c){
 return `<div class="app"><div class="row"><div><b>⏱️ TimeClock</b><div class="small">${esc(S.profile?.name)} · ${S.profile?.role}</div></div>
 <div class="actions"><button class="secondary" onclick="cycleTheme()">🌙 Theme</button><button class="secondary" onclick="logout()">Sign Out</button></div></div>
 ${S.msg?`<div class="notice">${esc(S.msg)}</div>`:""}${S.err?`<div class="error">${esc(S.err)}</div>`:""}${c}</div>`}
 function render(){theme();if(!S.user||!S.profile){app.innerHTML=auth();return}app.innerHTML=wrap(S.profile.role==="manager"?manager():worker())}
 async function login(){let email=emailEl().value.trim(),pass=passEl().value;if(!email||!pass)return toast("Enter email and password.",true);let r=await db.auth.signInWithPassword({email,password:pass});if(r.error)return toast(r.error.message,true);toast("Signed in.")}
-async function signup(){let email=emailEl().value.trim(),pass=passEl().value,role=document.getElementById("role").value;if(!email||pass.length<6)return toast("Use an email and a password of at least 6 characters.",true);let r=await db.auth.signUp({email,password:pass});if(r.error)return toast(r.error.message,true);if(!r.data.user)return toast("Check your email to finish signup.");let name=prompt("What name should TimeClock show?");if(!name)return toast("Finish signup, then sign in to complete your profile.");let p=await db.from("profiles").insert({id:r.data.user.id,name:name.trim(),role}).select().single();if(p.error)return toast(p.error.message,true);S.profile=p.data;render()}
+async function signup(){let name=f_name(),email=emailEl().value.trim(),pass=passEl().value,role=S.f.role;if(!name)return toast("Enter your name.",true);if(!email||pass.length<6)return toast("Use an email and a password of at least 6 characters.",true);let r=await db.auth.signUp({email,password:pass,options:{data:{name,role}}});if(r.error)return toast(r.error.message,true);if(!r.data.session)return toast("Check your email to confirm, then sign in.");let p=await db.from("profiles").insert({id:r.data.user.id,name,role}).select().single();if(p.error)return toast(p.error.message,true);S.profile=p.data;render()}
 const emailEl=()=>document.getElementById("email"),passEl=()=>document.getElementById("pass");
 async function resetPassword(){let email=emailEl().value.trim();if(!email)return toast("Type your email first, then tap Forgot Password.",true);let r=await db.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});if(r.error)return toast(r.error.message,true);toast("Check your email for the reset link.")}
-async function logout(){await db.auth.signOut();S={user:null,profile:null,jobs:[],job:null,tab:"home",msg:"",err:""};render()}
+const f_name=()=>(document.getElementById("name")?.value||"").trim();
+function setMode(m){S.mode=m;render()}
+function togglePw(b){let i=b.previousElementSibling,show=i.type==="password";i.type=show?"text":"password";b.textContent=show?"🙈":"👁️"}
+let npOpen=false;function newPass(){if(npOpen)return;npOpen=true;let d=document.createElement("dialog");d.innerHTML=`<h2>Set New Password</h2><label>New password</label><input id="np" type="password" placeholder="6+ characters"><div class="actions"><button class="primary" id="npb">Save Password</button></div>`;document.body.append(d);d.showModal();d.querySelector("#npb").onclick=async()=>{let p=d.querySelector("#np").value;if(p.length<6)return alert("Use at least 6 characters.");let r=await db.auth.updateUser({password:p});if(r.error)return alert(r.error.message);d.close();d.remove();npOpen=false;history.replaceState(null,"",location.pathname);toast("Password updated.")}}
+async function logout(){await db.auth.signOut();S={user:null,profile:null,jobs:[],job:null,tab:"home",msg:"",err:"",mode:"signin",f:{name:"",email:"",pass:"",role:"worker"}};render()}
 function cycleTheme(){let t=localStorage.tcTheme||"system";localStorage.tcTheme=t==="system"?"dark":t==="dark"?"light":"system";theme();render()}
 function chooseJob(id){S.job=S.jobs.find(x=>x.id===id);S.tab="home";render();if(S.profile.role==="manager")loadManagerHome()}
 function manager(){
