@@ -10,11 +10,20 @@ const date=x=>x?new Date(x).toLocaleString([],{dateStyle:"medium",timeStyle:"sho
 const mins=(a,b=new Date())=>Math.max(0,Math.floor((new Date(b)-new Date(a))/60000));
 const dur=(a,b)=>{let m=mins(a,b);return `${Math.floor(m/60)}h ${m%60}m`};
 function theme(){let t=localStorage.tcTheme||"system";document.documentElement.dataset.theme=t==="system"?(matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light"):t}
-function toast(x,e=false){S.msg=e?"":x;S.err=e?x:"";render();setTimeout(()=>{S.msg=S.err="";render()},3000)}
+function friendly(m){m=String(m||"");let l=m.toLowerCase();
+if(l.includes("invalid login"))return "Wrong email or password. No account yet? Tap 'Create an account' below.";
+if(l.includes("not confirmed"))return "Please confirm your email first. Check your inbox for the confirmation link.";
+if(l.includes("already registered"))return "An account with this email already exists. Tap 'Sign in' instead, or use Forgot Password.";
+if(l.includes("rate limit")||l.includes("too many")||l.includes("security purposes")||l.includes("429"))return "Too many tries. Wait a minute and try again.";
+if(l.includes("password")&&l.includes("character"))return "Password is too short. Use at least 6 characters.";
+if(l.includes("valid email")||l.includes("invalid email"))return "That doesn't look like a valid email.";
+if(l.includes("failed to fetch")||l.includes("network"))return "Can't connect. Check your internet and try again.";
+return m}
+function toast(x,e=false){S.msg=e?"":x;S.err=e?x:"";render();setTimeout(()=>{S.msg=S.err="";render()},6000)}
 async function load(){
  const {data:{user}}=await db.auth.getUser();S.user=user;
  if(!user){S.profile=null;return}
- const p=await db.from("profiles").select("*").eq("id",user.id).single();
+ const p=await db.from("profiles").select("*").eq("id",user.id).maybeSingle();
  S.profile=p.data;
  if(!S.profile&&user.user_metadata?.name){let ins=await db.from("profiles").insert({id:user.id,name:user.user_metadata.name,role:user.user_metadata.role||"worker"}).select().single();S.profile=ins.data||null}
  if(S.profile?.role==="manager"){let r=await db.from("jobs").select("*").eq("owner_id",user.id).order("created_at",{ascending:false});S.jobs=r.data||[]}
@@ -34,16 +43,21 @@ ${up?`<label>Your name</label><input id="name" type="text" placeholder="Name Tim
 ${up?`<label>Account type</label><select id="role" onchange="S.f.role=this.value"><option value="worker" ${f.role==="worker"?"selected":""}>👷 Worker</option><option value="manager" ${f.role==="manager"?"selected":""}>👑 Manager / Employer</option></select>`:""}
 <div class="actions">${up?`<button class="primary" onclick="signup()">Create Account</button>`:`<button class="primary" onclick="login()">Sign In</button><button class="secondary" onclick="resetPassword()">Forgot Password?</button>`}</div>
 <p class="small">${up?`Already have an account? <a href="#" onclick="setMode('signin');return false">Sign in</a>`:`New here? <a href="#" onclick="setMode('signup');return false">Create an account</a>`}</p>
-<p class="small">Supabase securely handles your password.</p></div></div>`}
+<p class="small">Supabase securely handles your password. · v4</p></div></div>`}
+function setup(){return `<div class="auth"><div class="hero"><div class="logo">⏱️</div><h1>Finish Setup</h1><p>You're signed in, but your profile isn't set up yet.</p></div>
+<div class="card"><h2>Your profile</h2><label>Your name</label><input id="sname" type="text" placeholder="Name TimeClock will show" value="${esc(S.f.name)}" oninput="S.f.name=this.value">
+<label>Account type</label><select id="srole" onchange="S.f.role=this.value"><option value="worker" ${S.f.role==="worker"?"selected":""}>👷 Worker</option><option value="manager" ${S.f.role==="manager"?"selected":""}>👑 Manager / Employer</option></select>
+<div class="actions"><button class="primary" onclick="saveProfile()">Save and Continue</button><button class="secondary" onclick="logout()">Sign Out</button></div></div></div>`}
+async function saveProfile(){let name=(S.f.name||"").trim();if(!name)return toast("Enter your name.",true);let p=await db.from("profiles").insert({id:S.user.id,name,role:S.f.role}).select().single();if(p.error)return toast(friendly(p.error.message),true);S.profile=p.data;await load();render()}
 function wrap(c){
 return `<div class="app"><div class="row"><div><b>⏱️ TimeClock</b><div class="small">${esc(S.profile?.name)} · ${S.profile?.role}</div></div>
 <div class="actions"><button class="secondary" onclick="cycleTheme()">🌙 Theme</button><button class="secondary" onclick="logout()">Sign Out</button></div></div>
 ${S.msg?`<div class="notice">${esc(S.msg)}</div>`:""}${S.err?`<div class="error">${esc(S.err)}</div>`:""}${c}</div>`}
-function render(){theme();if(!S.user||!S.profile){app.innerHTML=auth();return}app.innerHTML=wrap(S.profile.role==="manager"?manager():worker())}
-async function login(){let email=emailEl().value.trim(),pass=passEl().value;if(!email||!pass)return toast("Enter email and password.",true);let r=await db.auth.signInWithPassword({email,password:pass});if(r.error)return toast(r.error.message,true);toast("Signed in.")}
-async function signup(){let name=f_name(),email=emailEl().value.trim(),pass=passEl().value,role=S.f.role;if(!name)return toast("Enter your name.",true);if(!email||pass.length<6)return toast("Use an email and a password of at least 6 characters.",true);let r=await db.auth.signUp({email,password:pass,options:{data:{name,role}}});if(r.error)return toast(r.error.message,true);if(!r.data.session)return toast("Check your email to confirm, then sign in.");let p=await db.from("profiles").insert({id:r.data.user.id,name,role}).select().single();if(p.error)return toast(p.error.message,true);S.profile=p.data;render()}
+function render(){theme();if(!S.user||!S.profile){app.innerHTML=S.user?setup():auth();return}app.innerHTML=wrap(S.profile.role==="manager"?manager():worker())}
+async function login(){let email=emailEl().value.trim(),pass=passEl().value;if(!email||!pass)return toast("Enter email and password.",true);let r=await db.auth.signInWithPassword({email,password:pass});if(r.error)return toast(friendly(r.error.message),true);toast("Signed in.")}
+async function signup(){let name=f_name(),email=emailEl().value.trim(),pass=passEl().value,role=S.f.role;if(!name)return toast("Enter your name.",true);if(!email||pass.length<6)return toast("Use an email and a password of at least 6 characters.",true);let r=await db.auth.signUp({email,password:pass,options:{data:{name,role}}});if(r.error)return toast(friendly(r.error.message),true);if(r.data.user&&r.data.user.identities&&r.data.user.identities.length===0)return toast(friendly("already registered"),true);if(!r.data.session)return toast("Check your email to confirm, then sign in.");let p=await db.from("profiles").insert({id:r.data.user.id,name,role}).select().single();if(p.error)return toast(p.error.message,true);S.profile=p.data;render()}
 const emailEl=()=>document.getElementById("email"),passEl=()=>document.getElementById("pass");
-async function resetPassword(){let email=emailEl().value.trim();if(!email)return toast("Type your email first, then tap Forgot Password.",true);let r=await db.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});if(r.error)return toast(r.error.message,true);toast("Check your email for the reset link.")}
+async function resetPassword(){let email=emailEl().value.trim();if(!email)return toast("Type your email first, then tap Forgot Password.",true);let r=await db.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});if(r.error)return toast(friendly(r.error.message),true);toast("Check your email for the reset link.")}
 const f_name=()=>(document.getElementById("name")?.value||"").trim();
 function setMode(m){S.mode=m;render()}
 function togglePw(b){let i=b.previousElementSibling,show=i.type==="password";i.type=show?"text":"password";b.textContent=show?"🙈":"👁️"}
@@ -102,7 +116,7 @@ const originalRender=render;
 render=async function(){
   theme();
   if(!S.user||!S.profile){
-    app.innerHTML=auth();
+    app.innerHTML=S.user?setup():auth();
     return;
   }
   app.innerHTML=wrap(S.profile.role==="manager"?manager():worker());
