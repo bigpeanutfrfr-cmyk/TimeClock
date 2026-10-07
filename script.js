@@ -18,7 +18,7 @@ async function load(){
  if(S.profile?.role==="manager"){let r=await db.from("jobs").select("*").eq("owner_id",user.id).order("created_at",{ascending:false});S.jobs=r.data||[]}
  else {let r=await db.from("job_workers").select("job_id,status,jobs(*)").eq("worker_id",user.id);S.jobs=(r.data||[]).filter(x=>x.status==="active"&&x.jobs).map(x=>x.jobs)}
 }
-async function boot(){theme();await load();render();db.auth.onAuthStateChange(()=>setTimeout(async()=>{await load();render()},0))}
+async function boot(){theme();await load();render();db.auth.onAuthStateChange((event)=>{if(event==="PASSWORD_RECOVERY"){setTimeout(async()=>{let p=prompt("Enter your new password (6+ characters):");if(p&&p.length>=6){let r=await db.auth.updateUser({password:p});toast(r.error?r.error.message:"Password updated.",!!r.error)}else toast("Password not changed.",true)},0)}setTimeout(async()=>{await load();render()},0)})}
 boot();
 
 function auth(){
@@ -26,8 +26,7 @@ return `<div class="auth"><div class="hero"><div class="logo">⏱️</div><h1>Ti
 <div class="card"><h2>Sign in</h2><label>Email</label><input id="email" type="email">
 <label>Password</label><input id="pass" type="password">
 <label>Account type</label><select id="role"><option value="worker">👷 Worker</option><option value="manager">👑 Manager / Employer</option></select>
-<div class="actions"><button class="primary" onclick="login()">Sign In</button><button class="secondary" onclick="signup()">Create Account</button></div>
-<p class="small">Supabase securely handles your password.</p></div></div>`}
+<div class="actions"><button class="primary" onclick="login()">Sign In</button><button class="secondary" onclick="signup()">Create Account</button><button class="secondary" onclick="resetPassword()">Forgot Password?</button></div><p class="small">Supabase securely handles your password.</p></div></div>`}
 function wrap(c){
 return `<div class="app"><div class="row"><div><b>⏱️ TimeClock</b><div class="small">${esc(S.profile?.name)} · ${S.profile?.role}</div></div>
 <div class="actions"><button class="secondary" onclick="cycleTheme()">🌙 Theme</button><button class="secondary" onclick="logout()">Sign Out</button></div></div>
@@ -36,6 +35,7 @@ function render(){theme();if(!S.user||!S.profile){app.innerHTML=auth();return}ap
 async function login(){let email=emailEl().value.trim(),pass=passEl().value;if(!email||!pass)return toast("Enter email and password.",true);let r=await db.auth.signInWithPassword({email,password:pass});if(r.error)return toast(r.error.message,true);toast("Signed in.")}
 async function signup(){let email=emailEl().value.trim(),pass=passEl().value,role=document.getElementById("role").value;if(!email||pass.length<6)return toast("Use an email and a password of at least 6 characters.",true);let r=await db.auth.signUp({email,password:pass});if(r.error)return toast(r.error.message,true);if(!r.data.user)return toast("Check your email to finish signup.");let name=prompt("What name should TimeClock show?");if(!name)return toast("Finish signup, then sign in to complete your profile.");let p=await db.from("profiles").insert({id:r.data.user.id,name:name.trim(),role}).select().single();if(p.error)return toast(p.error.message,true);S.profile=p.data;render()}
 const emailEl=()=>document.getElementById("email"),passEl=()=>document.getElementById("pass");
+async function resetPassword(){let email=emailEl().value.trim();if(!email)return toast("Type your email first, then tap Forgot Password.",true);let r=await db.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});if(r.error)return toast(r.error.message,true);toast("Check your email for the reset link.")}
 async function logout(){await db.auth.signOut();S={user:null,profile:null,jobs:[],job:null,tab:"home",msg:"",err:""};render()}
 function cycleTheme(){let t=localStorage.tcTheme||"system";localStorage.tcTheme=t==="system"?"dark":t==="dark"?"light":"system";theme();render()}
 function chooseJob(id){S.job=S.jobs.find(x=>x.id===id);S.tab="home";render();if(S.profile.role==="manager")loadManagerHome()}
