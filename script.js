@@ -22,7 +22,8 @@ return m}
 function toast(x,e=false){S.msg=e?"":x;S.err=e?x:"";render();setTimeout(()=>{S.msg=S.err="";render()},6000)}
 async function load(){
  const {data:{user}}=await db.auth.getUser();S.user=user;
- if(!user){S.profile=null;return}
+ if(!user){S.profile=null;S.need2fa=false;return}
+ if(await needMfa()){S.need2fa=true;S.profile=null;return}S.need2fa=false;
  const p=await db.from("profiles").select("*").eq("id",user.id).maybeSingle();
  S.profile=p.data;
  if(!S.profile&&user.user_metadata?.name){let ins=await db.from("profiles").insert({id:user.id,name:user.user_metadata.name,role:user.user_metadata.role||"worker"}).select().single();S.profile=ins.data||null}
@@ -32,28 +33,29 @@ async function load(){
 async function boot(){theme();await load();render();if(RECOVERY)newPass();db.auth.onAuthStateChange((event)=>{if(event==="PASSWORD_RECOVERY")setTimeout(newPass,0);setTimeout(async()=>{await load();render()},0)})}
 boot();
 
+function banner(){return `${S.msg?`<div class="notice">${esc(S.msg)}</div>`:""}${S.err?`<div class="error">${esc(S.err)}</div>`:""}`}
 function auth(){
 const f=S.f,up=S.mode==="signup";
 const eye=`<button type="button" onclick="togglePw(this)" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:transparent;border:0;box-shadow:none;padding:6px 10px;width:auto;min-width:0;cursor:pointer;font-size:18px">👁️</button>`;
 return `<div class="auth"><div class="hero"><div class="logo">⏱️</div><h1>TimeClock</h1><p>Track shifts, tasks, requests, and jobs.</p></div>
-<div class="card"><h2>${up?"Create Account":"Sign In"}</h2>
+<div class="card"><h2>${up?"Create Account":"Sign In"}</h2>${banner()}
 ${up?`<label>Your name</label><input id="name" type="text" placeholder="Name TimeClock will show" value="${esc(f.name)}" oninput="S.f.name=this.value">`:""}
 <label>Email</label><input id="email" type="email" value="${esc(f.email)}" oninput="S.f.email=this.value">
 <label>Password</label><div style="position:relative"><input id="pass" type="password" style="padding-right:48px" value="${esc(f.pass)}" oninput="S.f.pass=this.value">${eye}</div>
 ${up?`<label>Account type</label><select id="role" onchange="S.f.role=this.value"><option value="worker" ${f.role==="worker"?"selected":""}>👷 Worker</option><option value="manager" ${f.role==="manager"?"selected":""}>👑 Manager / Employer</option></select>`:""}
 <div class="actions">${up?`<button class="primary" onclick="signup()">Create Account</button>`:`<button class="primary" onclick="login()">Sign In</button><button class="secondary" onclick="resetPassword()">Forgot Password?</button>`}</div>
 <p class="small">${up?`Already have an account? <a href="#" onclick="setMode('signin');return false">Sign in</a>`:`New here? <a href="#" onclick="setMode('signup');return false">Create an account</a>`}</p>
-<p class="small">Supabase securely handles your password. · v4</p></div></div>`}
+<p class="small">Supabase securely handles your password. · v6</p></div></div>`}
 function setup(){return `<div class="auth"><div class="hero"><div class="logo">⏱️</div><h1>Finish Setup</h1><p>You're signed in, but your profile isn't set up yet.</p></div>
-<div class="card"><h2>Your profile</h2><label>Your name</label><input id="sname" type="text" placeholder="Name TimeClock will show" value="${esc(S.f.name)}" oninput="S.f.name=this.value">
+<div class="card"><h2>Your profile</h2>${banner()}<label>Your name</label><input id="sname" type="text" placeholder="Name TimeClock will show" value="${esc(S.f.name)}" oninput="S.f.name=this.value">
 <label>Account type</label><select id="srole" onchange="S.f.role=this.value"><option value="worker" ${S.f.role==="worker"?"selected":""}>👷 Worker</option><option value="manager" ${S.f.role==="manager"?"selected":""}>👑 Manager / Employer</option></select>
 <div class="actions"><button class="primary" onclick="saveProfile()">Save and Continue</button><button class="secondary" onclick="logout()">Sign Out</button></div></div></div>`}
 async function saveProfile(){let name=(S.f.name||"").trim();if(!name)return toast("Enter your name.",true);let p=await db.from("profiles").insert({id:S.user.id,name,role:S.f.role}).select().single();if(p.error)return toast(friendly(p.error.message),true);S.profile=p.data;await load();render()}
 function wrap(c){
 return `<div class="app"><div class="row"><div><b>⏱️ TimeClock</b><div class="small">${esc(S.profile?.name)} · ${S.profile?.role}</div></div>
-<div class="actions"><button class="secondary" onclick="cycleTheme()">🌙 Theme</button><button class="secondary" onclick="logout()">Sign Out</button></div></div>
+<div class="actions"><button class="secondary" onclick="cycleTheme()">🌙 Theme</button><button class="secondary" onclick="mfaDialog()">🔐 2FA</button><button class="secondary" onclick="logout()">Sign Out</button></div></div>
 ${S.msg?`<div class="notice">${esc(S.msg)}</div>`:""}${S.err?`<div class="error">${esc(S.err)}</div>`:""}${c}</div>`}
-function render(){theme();if(!S.user||!S.profile){app.innerHTML=S.user?setup():auth();return}app.innerHTML=wrap(S.profile.role==="manager"?manager():worker())}
+function render(){theme();if(!S.user||!S.profile){app.innerHTML=S.need2fa?codeScreen():S.user?setup():auth();return}app.innerHTML=wrap(S.profile.role==="manager"?manager():worker())}
 async function login(){let email=emailEl().value.trim(),pass=passEl().value;if(!email||!pass)return toast("Enter email and password.",true);let r=await db.auth.signInWithPassword({email,password:pass});if(r.error)return toast(friendly(r.error.message),true);toast("Signed in.")}
 async function signup(){let name=f_name(),email=emailEl().value.trim(),pass=passEl().value,role=S.f.role;if(!name)return toast("Enter your name.",true);if(!email||pass.length<6)return toast("Use an email and a password of at least 6 characters.",true);let r=await db.auth.signUp({email,password:pass,options:{data:{name,role}}});if(r.error)return toast(friendly(r.error.message),true);if(r.data.user&&r.data.user.identities&&r.data.user.identities.length===0)return toast(friendly("already registered"),true);if(!r.data.session)return toast("Check your email to confirm, then sign in.");let p=await db.from("profiles").insert({id:r.data.user.id,name,role}).select().single();if(p.error)return toast(p.error.message,true);S.profile=p.data;render()}
 const emailEl=()=>document.getElementById("email"),passEl=()=>document.getElementById("pass");
@@ -116,7 +118,7 @@ const originalRender=render;
 render=async function(){
   theme();
   if(!S.user||!S.profile){
-    app.innerHTML=S.user?setup():auth();
+    app.innerHTML=S.need2fa?codeScreen():S.user?setup():auth();
     return;
   }
   app.innerHTML=wrap(S.profile.role==="manager"?manager():worker());
@@ -128,3 +130,32 @@ render=async function(){
     if(S.profile.role==="worker"&&S.tab==="home")await loadWorkerHome();
   }
 }
+
+async function needMfa(){try{let a=await db.auth.mfa.getAuthenticatorAssuranceLevel();return !!(a.data&&a.data.nextLevel==="aal2"&&a.data.currentLevel!=="aal2")}catch(e){return false}}
+function codeScreen(){return `<div class="auth"><div class="hero"><div class="logo">🔐</div><h1>Enter Code</h1><p>Open your authenticator app and enter the 6-digit code for TimeClock.</p></div>
+<div class="card">${banner()}<label>6-digit code</label><input id="mcode" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="123456">
+<div class="actions"><button class="primary" onclick="verifyLogin()">Verify</button><button class="secondary" onclick="logout()">Cancel</button></div></div></div>`}
+async function verifyLogin(){let code=(document.getElementById("mcode").value||"").trim();if(code.length!==6)return toast("Enter the 6-digit code.",true);let l=await db.auth.mfa.listFactors();let f=((l.data&&l.data.totp)||[]).find(x=>x.status==="verified");if(!f)return toast("No 2FA found. Sign out and try again.",true);let c=await db.auth.mfa.challenge({factorId:f.id});if(c.error)return toast(friendly(c.error.message),true);let v=await db.auth.mfa.verify({factorId:f.id,challengeId:c.data.id,code});if(v.error)return toast("Wrong code. Try again.",true);await load();render()}
+async function mfaDialog(){
+ let l=await db.auth.mfa.listFactors();if(l.error)return toast(friendly(l.error.message),true);
+ let f=((l.data&&l.data.totp)||[]).find(x=>x.status==="verified");
+ let d=document.createElement("dialog");
+ d.innerHTML=f?`<h2>🔐 2FA is ON</h2><p>Your account asks for an authenticator code every time you sign in.</p><div class="actions"><button class="danger" id="mfaoff">Turn Off 2FA</button><button class="secondary" id="mfax">Close</button></div>`
+ :`<h2>🔐 Set Up 2FA</h2><p>Adds a 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, or Authy) every time you sign in.</p><div id="mfabody"><div class="actions"><button class="primary" id="mfaon">Start Setup</button><button class="secondary" id="mfax">Close</button></div></div>`;
+ document.body.append(d);d.showModal();
+ const close=()=>{d.close();d.remove()};
+ d.querySelector("#mfax").onclick=close;
+ if(f){d.querySelector("#mfaoff").onclick=async()=>{let r=await db.auth.mfa.unenroll({factorId:f.id});close();if(r.error)return toast(friendly(r.error.message),true);toast("2FA turned off.")};return}
+ d.querySelector("#mfaon").onclick=async()=>{
+  for(let x of ((l.data&&l.data.all)||[]).filter(x=>x.status==="unverified")){await db.auth.mfa.unenroll({factorId:x.id})}
+  let e=await db.auth.mfa.enroll({factorType:"totp",friendlyName:"TimeClock "+Date.now()});
+  if(e.error){close();return toast(friendly(e.error.message),true)}
+  d.querySelector("#mfabody").innerHTML=`<p>1. Scan this code with your authenticator app.</p><div style="text-align:center;background:#fff;padding:8px;border-radius:10px"><img src="${e.data.totp.qr_code}" alt="QR code" style="width:200px;height:200px"></div><p class="small">Can't scan? Type this key into the app: <b style="word-break:break-all;user-select:all">${esc(e.data.totp.secret)}</b></p><p>2. Enter the 6-digit code it shows.</p><input id="mfac" type="text" inputmode="numeric" maxlength="6" placeholder="123456"><div class="actions"><button class="primary" id="mfav">Turn On 2FA</button><button class="secondary" id="mfax2">Cancel</button></div>`;
+  d.querySelector("#mfax2").onclick=async()=>{await db.auth.mfa.unenroll({factorId:e.data.id});close()};
+  d.querySelector("#mfav").onclick=async()=>{let code=d.querySelector("#mfac").value.trim();if(code.length!==6)return alert("Enter the 6-digit code.");let c=await db.auth.mfa.challenge({factorId:e.data.id});if(c.error)return alert(friendly(c.error.message));let v=await db.auth.mfa.verify({factorId:e.data.id,challengeId:c.data.id,code});if(v.error)return alert("Wrong code. Check your app and try again.");close();toast("2FA is on. You'll need a code next time you sign in.")}
+ }
+}
+function secCard(){return `<div class="card"><h2>🔐 Two-Factor Authentication</h2><p>Protect your account with a 6-digit code from an authenticator app.</p><div class="actions"><button class="primary" onclick="mfaDialog()">Manage 2FA</button></div></div>`}
+const _ms=msettings,_ws=wsettings;
+msettings=function(){return _ms()+secCard()};
+wsettings=function(){return _ws()+secCard()};
